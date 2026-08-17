@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       queries:
-        description: "budget"
+        description: "search budget"
         required: false
-        default: "60"
+        default: "70"
 
 permissions:
   contents: write
@@ -20,7 +20,7 @@ concurrency:
 jobs:
   tick:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       VAULT_PASS: ${{ secrets.VAULT_PASS }}
     steps:
@@ -46,27 +46,52 @@ jobs:
       - name: work
         env:
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
-          BS_SHEET_ID: ${{ secrets.BS_SHEET_ID }}
           GOOGLE_API_KEYS: ${{ secrets.GOOGLE_API_KEYS }}
           GOOGLE_CSE_IDS: ${{ secrets.GOOGLE_CSE_IDS }}
-          BS_QUERIES: ${{ github.event.inputs.queries || '60' }}
           KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
           KIMI_MODEL: ${{ secrets.KIMI_MODEL }}
           KIMI_BASE_URL: ${{ secrets.KIMI_BASE_URL }}
-          BS_SENDER_USER: ${{ secrets.BS_SENDER_USER }}
-          BS_SALES_USER: ${{ secrets.BS_SENDER_USER }}
-          BS_SENDER_APP_PW: ${{ secrets.BS_SENDER_APP_PW }}
-          BS_SALES_FIRST: ${{ secrets.BS_SALES_FIRST }}
-          BS_CALENDLY_URL: ${{ secrets.BS_CALENDLY_URL }}
-          BS_CALENDLY_TOKEN: ${{ secrets.BS_CALENDLY_TOKEN }}
-          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
-          BS_DAILY_CAP: "55"
+          BS_SHEET_ID: ${{ secrets.BS_SHEET_ID }}
+          # 7 live keys, 100 calls each, so 700 a day. One query costs two calls
+          # (two pages), which is ~100 queries a run over four runs.
+          MAX_GOOGLE_QUERIES: ${{ github.event.inputs.queries || '70' }}
+          SEARCH_PAGES: "2"
+          CRAWL_WORKERS: "12"
+          DELAY_URL: "0.9"
+          DELAY_PAGE: "0.7"
+          DELAY_QUERY: "1.5"
         run: ./run.sh main_collect.py
+
+      # Second source, and it spends no search quota: the crawl index hands over
+      # Asian domains by the thousand and they go through the same three gates.
+      # This is what keeps the base growing on days when the search vein is dry.
+      - name: second source
+        continue-on-error: true
+        env:
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
+          KIMI_MODEL: ${{ secrets.KIMI_MODEL }}
+          KIMI_BASE_URL: ${{ secrets.KIMI_BASE_URL }}
+          BS_SHEET_ID: ${{ secrets.BS_SHEET_ID }}
+          CRAWL_WORKERS: "12"
+        run: ./run.sh main_crawl.py --domains 250
+
+      # Third source: companies that passed every gate but hid their address.
+      - name: dig
+        continue-on-error: true
+        env:
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
+          KIMI_MODEL: ${{ secrets.KIMI_MODEL }}
+          KIMI_BASE_URL: ${{ secrets.KIMI_BASE_URL }}
+          BS_SHEET_ID: ${{ secrets.BS_SHEET_ID }}
+          CRAWL_WORKERS: "8"
+        run: ./run.sh main_dig.py --limit 60
 
       - name: save
         if: always()
         run: |
-          git config user.name "queue-b"
+          git config user.name "automation"
           git config user.email "actions@github.com"
           ./vault.sh lock-harvest work/data
           cp state.enc /tmp/fresh.enc
