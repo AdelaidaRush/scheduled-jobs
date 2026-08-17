@@ -1,0 +1,91 @@
+name: digest
+
+on:
+  schedule:
+    - cron: "5 10 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      why:
+        description: "manual"
+        required: false
+        default: "вручную"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: queue-a
+  cancel-in-progress: false
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VAULT_PASS: ${{ secrets.VAULT_PASS }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: unpack
+        run: ./vault.sh unlock-code work
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: work/requirements.txt
+
+      - name: deps
+        run: pip install -r work/requirements.txt
+
+      - name: checks
+        run: ./run.sh main_checks.py
+
+      - name: inbox
+        env:
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          BS_SHEET_ID: ${{ secrets.BS_SHEET_ID }}
+          BS_SENDER_USER: ${{ secrets.BS_SENDER_USER }}
+          BS_SENDER_APP_PW: ${{ secrets.BS_SENDER_APP_PW }}
+          DRY_RUN: "false"
+        run: ./run.sh main_inbox.py
+
+      - name: report
+        env:
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          BS_SHEET_ID: ${{ secrets.BS_SHEET_ID }}
+          GOOGLE_API_KEYS: ${{ secrets.GOOGLE_API_KEYS }}
+          GOOGLE_CSE_IDS: ${{ secrets.GOOGLE_CSE_IDS }}
+          BS_HARVEST_HOURS: ""
+          KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
+          KIMI_MODEL: ${{ secrets.KIMI_MODEL }}
+          KIMI_BASE_URL: ${{ secrets.KIMI_BASE_URL }}
+          BS_SENDER_USER: ${{ secrets.BS_SENDER_USER }}
+          BS_SALES_USER: ${{ secrets.BS_SENDER_USER }}
+          BS_SENDER_APP_PW: ${{ secrets.BS_SENDER_APP_PW }}
+          BS_SALES_FIRST: ${{ secrets.BS_SALES_FIRST }}
+          BS_CALENDLY_URL: ${{ secrets.BS_CALENDLY_URL }}
+          BS_CALENDLY_TOKEN: ${{ secrets.BS_CALENDLY_TOKEN }}
+          BS_TG_TOKEN: ${{ secrets.BS_TG_TOKEN }}
+          BS_TG_CHAT: ${{ secrets.BS_TG_CHAT }}
+          BS_DAILY_CAP: "55"
+        run: ./run.sh main_digest.py
+
+      - name: save
+        if: always()
+        run: |
+          git config user.name "automation"
+          git config user.email "actions@github.com"
+          cp state.enc /tmp/fresh.enc
+          for i in 1 2 3 4 5; do
+            git fetch -q origin main && git reset -q --hard origin/main
+            cp /tmp/fresh.enc state.enc
+            git add state.enc
+            git diff --staged --quiet && echo "unchanged" && exit 0
+            git commit -q -m "state $(date -u +%Y-%m-%dT%H:%MZ)"
+            git push -q && echo "saved" && exit 0
+            echo "attempt $i failed, waiting"
+            sleep $((3 * i))
+          done
+          echo "state not saved"
+          exit 0
