@@ -9,6 +9,10 @@ on:
         description: "dry run"
         required: false
         default: "false"
+      force_window:
+        description: "ignore the working-hours window (manual runs only)"
+        required: false
+        default: "false"
 
 permissions:
   contents: write
@@ -83,6 +87,9 @@ jobs:
           BS_CALENDLY_TOKEN: ${{ secrets.BS_CALENDLY_TOKEN }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
           BS_DAILY_CAP: "55"
+          BS_WORK_FROM: ${{ github.event.inputs.force_window == 'true' && '0' || '9' }}
+          BS_WORK_TO: ${{ github.event.inputs.force_window == 'true' && '23' || '18' }}
+          BS_WEEKDAYS_ONLY: ${{ github.event.inputs.force_window == 'true' && 'false' || 'true' }}
         run: ./run.sh main_tick.py
 
       - name: save
