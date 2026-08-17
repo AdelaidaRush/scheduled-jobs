@@ -3,3 +3,4 @@ work/
 *.pass
 .DS_Store
 __pycache__/
+go-public.sh
