@@ -13,6 +13,10 @@ on:
         description: "ignore the working-hours window (manual runs only)"
         required: false
         default: "false"
+      smoke:
+        description: "send one test letter to our own mailbox, touching nothing"
+        required: false
+        default: "false"
 
 permissions:
   contents: write
@@ -68,8 +72,17 @@ jobs:
         if: steps.due.outputs.go == 'true' || github.event_name != 'schedule'
         run: ./run.sh main_checks.py
 
+      - name: smoke
+        if: github.event.inputs.smoke == 'true'
+        env:
+          BS_SENDER_USER: ${{ secrets.BS_SENDER_USER }}
+          BS_SENDER_APP_PW: ${{ secrets.BS_SENDER_APP_PW }}
+          BS_SALES_FIRST: ${{ secrets.BS_SALES_FIRST }}
+          BS_CALENDLY_URL: ${{ secrets.BS_CALENDLY_URL }}
+        run: ./run.sh main_smoke.py
+
       - name: work
-        if: steps.due.outputs.go == 'true' || github.event_name != 'schedule'
+        if: (steps.due.outputs.go == 'true' || github.event_name != 'schedule') && github.event.inputs.smoke != 'true'
         env:
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
           BS_SHEET_ID: ${{ secrets.BS_SHEET_ID }}
