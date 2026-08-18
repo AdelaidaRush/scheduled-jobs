@@ -20,7 +20,11 @@ concurrency:
 jobs:
   tick:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # Потолок был 45 минут, и 18.08 заход упёрся в него ровно: поиск успел,
+    # Common Crawl обрезало на середине, добор адресов не начался вовсе.
+    # Минуты теперь бесплатные, поэтому потолок поднят, а каждому шагу дан свой
+    # предел: без этого один медленный шаг съедает время двух следующих.
+    timeout-minutes: 90
     env:
       VAULT_PASS: ${{ secrets.VAULT_PASS }}
     steps:
@@ -60,6 +64,7 @@ jobs:
           DELAY_URL: "0.9"
           DELAY_PAGE: "0.7"
           DELAY_QUERY: "1.5"
+        timeout-minutes: 30
         run: ./run.sh main_collect.py
 
       # Second source, and it spends no search quota: the crawl index hands over
@@ -74,6 +79,7 @@ jobs:
           KIMI_BASE_URL: ${{ secrets.KIMI_BASE_URL }}
           BS_SHEET_ID: ${{ secrets.BS_SHEET_ID }}
           CRAWL_WORKERS: "12"
+        timeout-minutes: 25
         run: ./run.sh main_crawl.py --domains 250
 
       # Third source: companies that passed every gate but hid their address.
@@ -86,6 +92,7 @@ jobs:
           KIMI_BASE_URL: ${{ secrets.KIMI_BASE_URL }}
           BS_SHEET_ID: ${{ secrets.BS_SHEET_ID }}
           CRAWL_WORKERS: "8"
+        timeout-minutes: 25
         run: ./run.sh main_dig.py --limit 60
 
       - name: save
