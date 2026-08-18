@@ -68,6 +68,7 @@ jobs:
           BS_CALENDLY_TOKEN: ${{ secrets.BS_CALENDLY_TOKEN }}
           BS_TG_TOKEN: ${{ secrets.BS_TG_TOKEN }}
           BS_TG_CHAT: ${{ secrets.BS_TG_CHAT }}
+          BS_TG_ALLOW: ${{ secrets.BS_TG_ALLOW }}
           BS_DAILY_CAP: "55"
         run: ./run.sh main_digest.py
 
