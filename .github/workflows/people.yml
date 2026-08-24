@@ -1,0 +1,60 @@
+name: people
+
+# Два новых сборщика. Основная гипотеза четыре раза в сутки, вторая один раз:
+# у неё выдача беднее, и тратить на неё половину квоты смысла нет.
+on:
+  schedule:
+    - cron: "10 6,11,15 * * *"    # основная гипотеза
+    - cron: "40 18 * * *"          # вторая гипотеза
+  workflow_dispatch:
+    inputs:
+      hypothesis:
+        description: "main или cis"
+        required: false
+        default: "main"
+      queries:
+        description: "сколько поисковых запросов за заход"
+        required: false
+        default: "12"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: queue-b
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      VAULT_PASS: ${{ secrets.VAULT_PASS }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet gspread google-auth
+
+      - name: run
+        env:
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          GOOGLE_API_KEYS: ${{ secrets.GOOGLE_API_KEYS }}
+          GOOGLE_CSE_IDS: ${{ secrets.GOOGLE_CSE_IDS }}
+          BS_SHEET_ID: ${{ secrets.BS_SHEET_ID }}
+        run: |
+          H=$(date -u +%H)
+          WHICH="${{ github.event.inputs.hypothesis }}"
+          if [ -z "$WHICH" ]; then
+            if [ "$H" = "18" ]; then WHICH=cis; else WHICH=main; fi
+          fi
+          N="${{ github.event.inputs.queries }}"; N="${N:-12}"
+          if [ "$WHICH" = "cis" ]; then ./run.sh main_people_cis.py "$N"; else ./run.sh main_people.py "$N"; fi
+
+      - name: save state
+        run: |
+          if ! git diff --quiet; then
+            git config user.email "bot@local"; git config user.name "bot"
+            git add -A && git commit -m "state $(date -u +%FT%RZ)" && git push
+          fi
