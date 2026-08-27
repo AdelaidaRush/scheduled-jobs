@@ -100,6 +100,10 @@ jobs:
           BS_CALENDLY_TOKEN: ${{ secrets.BS_CALENDLY_TOKEN }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
           BS_DAILY_CAP: "55"
+          # Догоняющие письма выключены решением Дениса 27.08.2026: концентрируемся на
+          # первом письме и ждём ответа компаний, лимит целиком уходит первым касаниям.
+          # Включить обратно: заменить off на on, больше ничего менять не нужно.
+          BS_FOLLOWUP: "off"
           BS_WORK_FROM: ${{ github.event.inputs.force_window == 'true' && '0' || '9' }}
           BS_WORK_TO: ${{ github.event.inputs.force_window == 'true' && '23' || '18' }}
           BS_WEEKDAYS_ONLY: ${{ github.event.inputs.force_window == 'true' && 'false' || 'true' }}
