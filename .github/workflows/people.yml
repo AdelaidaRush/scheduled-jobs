@@ -1,37 +1,33 @@
 name: people
 
-# Сбор людей. Два сборщика: основная гипотеза (Азия и Залив) и вторая (СНГ, Кавказ, Монголия).
+# Сбор людей: основная гипотеза (Азия и Залив) и вторая (СНГ, Кавказ, Монголия).
 #
-# 🔴 ПЕРЕЛОЖЕНО 31.08.2026, три причины, все замеренные.
+# 🔴 ПЕРЕЛОЖЕНО 01.09.2026 по решению Дениса: не «в такой-то час», а «прошло столько-то
+# часов с прошлого прогона». Причина замерена: крон GitHub рвётся и опаздывает, а у
+# рассылки расписание «каждые десять минут» задушено до одного прогона в сутки. При
+# жёстких часах пропущенный час теряется навсегда; здесь следующая попытка видит
+# просрочку и добирает.
 #
-# 1. Квота Google сбрасывается в полночь по тихоокеанскому времени, летом это 07:00 UTC.
-#    Прежний заход в 06:10 приходил ДО сброса, заставал все семь ключей выжатыми со вчера
-#    и не мог собрать ничего. Все заходы теперь после 07:30.
-# 2. Расписание GitHub рвётся: за 29 и 30 августа из восьми назначенных прогонов состоялось
-#    семь, и все с опозданием от сорока минут до шести часов. Поэтому попыток теперь больше,
-#    чем нужно, а от перерасхода защищает не расписание, а потолок трат внутри захода.
-# 3. Потолок BS_MAX_CALLS. Квота контура 700 обращений в сутки на ВСЕ заходы вместе.
-#    85 × 6 основных + 85 × 2 по СНГ = 680, то есть даже при всех сработавших попытках
-#    в квоту укладываемся. Заход, пришедший на пустую квоту, теперь не падает: он перебирает
-#    ключи, не находит живого и выходит.
+# Попытка приходит каждый час с 07:25 до 23:25 UTC. Раньше семи не ходим: квота Google
+# сбрасывается в полночь по тихоокеанскому, летом это 07:00 UTC, и до сброса ключи
+# выжаты со вчера. Решает не крон, а due.py — почти все попытки выходят за пару секунд.
 on:
   schedule:
-    - cron: "40 7,9,11,13,15,17 * * *"   # основная гипотеза, шесть попыток после сброса квоты
-    - cron: "40 19,21 * * *"             # вторая гипотеза, СНГ
+    - cron: "25 7-23 * * *"
   workflow_dispatch:
     inputs:
       hypothesis:
-        description: "main или cis"
+        description: "main, cis или auto (по времени с прошлого прогона)"
         required: false
-        default: "main"
+        default: "auto"
       queries:
         description: "сколько поисковых запросов за заход"
         required: false
-        default: "12"
+        default: "14"
       max_calls:
-        description: "потолок обращений к поиску за заход"
+        description: "потолок обращений к поиску; пусто = считать от своего набора ключей"
         required: false
-        default: "85"
+        default: ""
 
 permissions:
   contents: write
@@ -43,37 +39,65 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       VAULT_PASS: ${{ secrets.VAULT_PASS }}
     steps:
       - uses: actions/checkout@v4
+
+      # Дешёвый выход. Большинство часовых попыток заканчиваются здесь, не потратив
+      # ни установки зависимостей, ни единого обращения к поиску.
+      - name: Пора ли
+        id: due
+        run: |
+          W="${{ github.event.inputs.hypothesis }}"
+          if [ -n "$W" ] && [ "$W" != "auto" ]; then
+            echo "запуск руками, гипотеза: $W"
+            echo "which=$W" >> "$GITHUB_OUTPUT"
+          else
+            python3 due.py
+          fi
+
       - uses: actions/setup-python@v5
+        if: steps.due.outputs.which != 'none'
         with:
           python-version: "3.12"
       - run: pip install --quiet gspread google-auth
+        if: steps.due.outputs.which != 'none'
 
-      - name: run
+      - name: Сбор
+        if: steps.due.outputs.which != 'none'
         env:
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
           GOOGLE_API_KEYS: ${{ secrets.GOOGLE_API_KEYS }}
           GOOGLE_CSE_IDS: ${{ secrets.GOOGLE_CSE_IDS }}
           BS_SHEET_ID: ${{ secrets.BS_SHEET_ID }}
-          BS_MAX_CALLS: ${{ github.event.inputs.max_calls || '85' }}
+          # Пусто = потолок считается от СВОЕГО набора ключей и числа заходов в сутки,
+          # см. people_config.KEY_SHARE и RUNS_PER_DAY. Так добавление ключей поднимает
+          # потолок само, без правки этого файла.
+          BS_MAX_CALLS: ${{ github.event.inputs.max_calls }}
         run: |
-          H=$(date -u +%H)
-          WHICH="${{ github.event.inputs.hypothesis }}"
-          if [ -z "$WHICH" ]; then
-            # СНГ идёт в вечерние часы, всё остальное время работает основная гипотеза
-            case "$H" in 19|20|21|22) WHICH=cis ;; *) WHICH=main ;; esac
-          fi
-          N="${{ github.event.inputs.queries }}"; N="${N:-12}"
-          echo "гипотеза: $WHICH · запросов: $N · потолок обращений: $BS_MAX_CALLS"
-          if [ "$WHICH" = "cis" ]; then ./run.sh main_people_cis.py "$N"; else ./run.sh main_people.py "$N"; fi
+          W="${{ steps.due.outputs.which }}"
+          N="${{ github.event.inputs.queries }}"; N="${N:-14}"
+          echo "гипотеза: $W · запросов: $N"
+          if [ "$W" = "cis" ]; then ./run.sh main_people_cis.py "$N"; else ./run.sh main_people.py "$N"; fi
 
-      - name: save state
+      # Отметка времени ставится ТОЛЬКО после состоявшегося сбора. Упавший заход не
+      # сдвигает счётчик, поэтому следующая попытка через час попробует снова.
+      - name: Отметить прогон
+        if: steps.due.outputs.which != 'none' && success()
+        run: python3 stamp.py "${{ steps.due.outputs.which }}"
+
+      - name: Сохранить состояние
+        if: steps.due.outputs.which != 'none'
         run: |
-          if ! git diff --quiet; then
-            git config user.email "bot@local"; git config user.name "bot"
-            git add -A && git commit -m "state $(date -u +%FT%RZ)" && git push
-          fi
+          git config user.email "bot@local"; git config user.name "bot"
+          git add -A
+          git diff --staged --quiet && exit 0
+          git commit -q -m "state $(date -u +%FT%RZ)"
+          for i in 1 2 3; do
+            git pull --rebase --autostash -q && git push -q && exit 0
+            sleep $((3 * i))
+          done
+          echo "состояние не сохранено — следующая попытка сочтёт, что прогона не было"
+          exit 0
