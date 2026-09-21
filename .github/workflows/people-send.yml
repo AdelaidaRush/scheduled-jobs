@@ -70,16 +70,16 @@ jobs:
             echo "рубильник выключен, рассылка не начата"; echo "go=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: unpack
+        if: steps.armed.outputs.go == 'true'
+        run: ./vault.sh unlock-code work
+
       - uses: actions/setup-python@v5
         if: steps.armed.outputs.go == 'true'
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: work/requirements.txt
-
-      - name: unpack
-        if: steps.armed.outputs.go == 'true'
-        run: ./vault.sh unlock-code work
 
       - name: deps
         if: steps.armed.outputs.go == 'true'
