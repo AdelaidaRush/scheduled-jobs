@@ -1,0 +1,129 @@
+name: people-send
+
+# Рассылка по второй гипотезе: письмо конкретному руководителю из вкладки People.
+#
+# 🔴 Приказ Дениса 21.09.2026. Два отличия от tick / tick-b, которые шлют по вкладке Leads:
+#
+# 1. РУЧНОЙ ПУСК. Расписание само по себе не отправляет НИЧЕГО. Пока рубильник выключен,
+#    каждый заход выходит за секунду. Включает рассылку только запуск руками:
+#    Actions → people-send → Run workflow → action=start. Первое письмо уходит сразу,
+#    дальше расписание продолжает само. Остановить: тот же запуск с action=stop.
+# 2. РОВНЫЙ ТЕМП. Норма 50 писем в сутки делится на окно 9:00-18:00 по Сингапуру, это
+#    одно письмо примерно раз в 11 минут. Заход смотрит, сколько должно было уйти к этой
+#    минуте, и добирает отставание: крон GitHub рвётся, и без догона вместо пятидесяти
+#    писем в день уходило бы восемь.
+on:
+  schedule:
+    - cron: "*/10 1-10 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "start = включить и отправить первое письмо сразу · stop = выключить · tick = один заход"
+        required: false
+        default: "start"
+      variant:
+        description: "какое письмо: A, B или C"
+        required: false
+        default: "A"
+      cap:
+        description: "сколько писем в сутки"
+        required: false
+        default: "50"
+      dry_run:
+        description: "true = напечатать письмо и не отправлять"
+        required: false
+        default: "false"
+      force_window:
+        description: "true = не смотреть на рабочие часы и выходные"
+        required: false
+        default: "false"
+
+permissions:
+  contents: write
+
+# Тот же замок, что у рассылки первой гипотезы: ящик один, и два прогона никогда
+# не должны отправлять одновременно.
+concurrency:
+  group: queue-a
+  cancel-in-progress: false
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VAULT_PASS: ${{ secrets.VAULT_PASS }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Дешёвый выход: пока рубильник выключен, заход не ставит питон и не читает таблицу.
+      - name: Включён ли рубильник
+        id: armed
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "запуск руками, идём дальше"; echo "go=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          ./vault.sh unlock-state /tmp/st >/dev/null 2>&1 || true
+          if python3 -c "import json,sys; sys.exit(0 if json.load(open('/tmp/st/h2_campaign.json')).get('armed') else 1)" 2>/dev/null; then
+            echo "рубильник включён"; echo "go=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "рубильник выключен, рассылка не начата"; echo "go=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.armed.outputs.go == 'true'
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: work/requirements.txt
+
+      - name: unpack
+        if: steps.armed.outputs.go == 'true'
+        run: ./vault.sh unlock-code work
+
+      - name: deps
+        if: steps.armed.outputs.go == 'true'
+        run: pip install -r work/requirements.txt
+
+      - name: checks
+        if: steps.armed.outputs.go == 'true'
+        run: ./run.sh main_checks.py
+
+      - name: work
+        if: steps.armed.outputs.go == 'true'
+        env:
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          BS_SHEET_ID: ${{ secrets.BS_SHEET_ID }}
+          BS_SENDER_USER: ${{ secrets.BS_SENDER_USER }}
+          BS_SALES_USER: ${{ secrets.BS_SENDER_USER }}
+          BS_SENDER_APP_PW: ${{ secrets.BS_SENDER_APP_PW }}
+          BS_SALES_FIRST: ${{ secrets.BS_SALES_FIRST }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+          BS_H2_ACTION: ${{ github.event.inputs.action || 'tick' }}
+          BS_H2_VARIANT: ${{ github.event.inputs.variant }}
+          BS_H2_DAILY_CAP: ${{ github.event.inputs.cap }}
+          BS_WORK_FROM: ${{ github.event.inputs.force_window == 'true' && '0' || '9' }}
+          BS_WORK_TO: ${{ github.event.inputs.force_window == 'true' && '23' || '18' }}
+          BS_WEEKDAYS_ONLY: ${{ github.event.inputs.force_window == 'true' && 'false' || 'true' }}
+        run: ./run.sh main_people_send.py
+
+      # Состояние держит и рубильник, и память об уже отправленных адресах. Без записи
+      # обратно следующий заход решил бы, что рассылка не начата.
+      - name: save
+        if: always() && steps.armed.outputs.go == 'true'
+        run: |
+          git config user.name "automation"
+          git config user.email "actions@github.com"
+          cp state.enc /tmp/fresh.enc
+          for i in 1 2 3 4 5; do
+            git fetch -q origin main && git reset -q --hard origin/main
+            cp /tmp/fresh.enc state.enc
+            git add state.enc
+            git diff --staged --quiet && echo "unchanged" && exit 0
+            git commit -q -m "state $(date -u +%Y-%m-%dT%H:%MZ)"
+            git push -q && echo "saved" && exit 0
+            echo "attempt $i failed, waiting"
+            sleep $((3 * i))
+          done
+          echo "состояние не сохранено"
+          exit 0
