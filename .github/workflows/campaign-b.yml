@@ -9,8 +9,8 @@
 name: tick-b
 
 on:
-  schedule:
-    - cron: "5,20,35,50 1-10 * * 1-5"
+  # schedule:
+#    - cron: "5,20,35,50 1-10 * * 1-5"
   workflow_dispatch:
     inputs:
       dry_run:
