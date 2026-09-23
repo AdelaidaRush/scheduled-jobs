@@ -110,6 +110,8 @@ jobs:
           # прогона 22 и 23 сентября умерли до первого письма. Теперь у каждого поля есть
           # значение по умолчанию, а сам код пустую строку тоже переживает.
           BS_H2_VARIANT: ${{ github.event.inputs.variant || 'MIX' }}
+          # Шаг между письмами, приказ Дениса 23.09.2026.
+          BS_SEND_GAP_MIN: '30'
           BS_H3_DAILY_CAP: ${{ github.event.inputs.cap || '50' }}
           BS_TZ: Europe/Moscow
           BS_WORK_FROM: ${{ github.event.inputs.force_window == 'true' && '0' || '9' }}
